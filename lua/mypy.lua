@@ -1,9 +1,12 @@
 ---@class mypy.M
 ---@field use_venv boolean
 ---@field venv_path string
+---@field timeout number
+---@field severities table<string, vim.diagnostic.Severity>
 M = {
 	use_venv = true,
 	venv_path = tostring(vim.env.VIRTUAL_ENV or ""),
+	timeout = 5 * 1000,
 	severities = {
 		error = vim.diagnostic.severity.ERROR,
 		warning = vim.diagnostic.severity.WARN,
@@ -11,10 +14,22 @@ M = {
 	},
 }
 
+--- Running processes by buffer -> linting process
+---@type table<integer, vim.SystemObj>
+local running_procs_by_buf = {}
+
+---@param proc vim.SystemObj?
+local function cancel_mypy(proc)
+	if proc then
+		proc:kill(9)
+	end
+end
+
 ---@class mypy.Config
 ---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
 ---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
----@field severities {string: vim.diagnostic.Severity}? Mypy severiry to diagnostics severity mapping.
+---@field timeout number? Timeout for mypy process to run in milliseconds. Defaults to 5s.
+---@field severities table<string, vim.diagnostic.Severity>? Mypy severiry to diagnostics severity mapping.
 
 ---@param config mypy.Config?
 M.setup = function(config)
@@ -23,10 +38,13 @@ M.setup = function(config)
 
 	config = config or {}
 	if config.use_venv ~= nil then
-		M.use_env = config.use_venv
+		M.use_venv = config.use_venv
 	end
 	if config.venv_path ~= nil then
 		M.venv_path = config.venv_path
+	end
+	if config.timeout ~= nil then
+		M.timeout = config.timeout
 	end
 	if config.severities ~= nil then
 		M.severities = config.severities
@@ -44,6 +62,10 @@ M.setup = function(config)
 	end, { desc = "Enable mypy diagnostics" })
 	vim.api.nvim_create_user_command("MypyDisable", function()
 		M.enabled = false
+		for buf, proc in pairs(running_procs_by_buf) do
+			cancel_mypy(proc)
+			running_procs_by_buf[buf] = nil
+		end
 	end, { desc = "Disable mypy diagnostics" })
 	vim.api.nvim_create_user_command("MypyToggle", function()
 		M.enabled = not M.enabled
@@ -103,8 +125,7 @@ local function try_parse_short(buf_num, line)
 	end
 
 	local lnum = math.max(tonumber(line_from) - 1, 0)
-	local srcline = vim.api.nvim_buf_get_lines(buf_num, lnum, lnum + 1, true)[1]
-	local col = #srcline
+	local col = #vim.api.nvim_buf_get_lines(buf_num, lnum, lnum + 1, true)[1]
 
 	return {
 		source = "mypy",
@@ -124,7 +145,7 @@ end
 local function parse(buf_num, out)
 	---@type vim.Diagnostic[]
 	local diagnostics = {}
-	for line in out:gmatch("(.*)\n") do
+	for line in out:gmatch("(.-)\n") do
 		local d = try_parse_long(line)
 		if d ~= nil then
 			table.insert(diagnostics, d)
@@ -135,7 +156,7 @@ local function parse(buf_num, out)
 		if d ~= nil then
 			table.insert(diagnostics, d)
 		else
-			error(("Can not process mypy output line : '%s'"):format(line))
+			vim.notify(("Can not process mypy output line : '%s'"):format(line), vim.log.levels.WARN)
 		end
 
 		::continue::
@@ -146,7 +167,7 @@ end
 ---@param buf_num integer
 ---@return nil
 local function mypy(buf_num)
-	local buf_path = vim.api.nvim_buf_get_name(0)
+	local buf_path = vim.api.nvim_buf_get_name(buf_num)
 
 	local cmd = {
 		mypy_path(),
@@ -159,26 +180,47 @@ local function mypy(buf_num)
 		buf_path,
 	}
 
-	local mypy_result = vim.system(cmd, {}):wait()
-	if mypy_result.code == 0 then
-		vim.schedule(function()
-			vim.diagnostic.reset(M.namespace, buf_num)
-		end)
-		return
-	end
+	cancel_mypy(running_procs_by_buf[buf_num])
 
-	local diagnostics = parse(buf_num, mypy_result.stdout)
-	vim.schedule(function()
-		vim.diagnostic.set(M.namespace, buf_num, diagnostics)
-	end)
+	do
+		local mypy_proc
+		mypy_proc = vim.system(cmd, { timeout = M.timeout }, function(mypy_result)
+			---@diagnostic disable-next-line: redefined-local
+			if running_procs_by_buf[buf_num] ~= mypy_proc then
+				return
+			end
+			running_procs_by_buf[buf_num] = nil
+
+			if mypy_result.code == 0 then
+				vim.schedule(function()
+					vim.diagnostic.reset(M.namespace, buf_num)
+				end)
+				return
+			end
+
+			if mypy_result.code == 1 then
+				vim.schedule(function()
+					local diagnostics = parse(buf_num, mypy_result.stdout)
+					vim.diagnostic.set(M.namespace, buf_num, diagnostics)
+				end)
+				return
+			end
+
+			vim.notify(
+				string.format("Failed to run mypy. stdout: '%s', stderr: '%s'", mypy_result.stdout, mypy_result.stderr),
+				vim.log.levels.WARN
+			)
+		end)
+		running_procs_by_buf[buf_num] = mypy_proc
+	end
 end
 
 M.typecheck_current_buffer = function()
-	if not vim.bo.modifiable then
+	local current_buf = vim.api.nvim_get_current_buf()
+
+	if not vim.bo[current_buf].modifiable then
 		return
 	end
-
-	local current_buf = vim.api.nvim_get_current_buf()
 
 	if not M.enabled then
 		vim.diagnostic.reset(M.namespace, current_buf)
@@ -187,7 +229,7 @@ M.typecheck_current_buffer = function()
 
 	local ok, call_result = pcall(mypy, current_buf)
 	if not ok then
-		error(string.format("Failed to run mypy: %s", call_result))
+		vim.notify(string.format("Failed to run mypy: %s", call_result), vim.log.levels.WARN)
 	end
 end
 
