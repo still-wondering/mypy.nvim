@@ -1,9 +1,20 @@
+---@class mypy.M
+---@field use_venv boolean
+---@field venv_path string
 M = {
-	use_env = true,
+	use_venv = true,
+	venv_path = tostring(vim.env.VIRTUAL_ENV or ""),
+	severities = {
+		error = vim.diagnostic.severity.ERROR,
+		warning = vim.diagnostic.severity.WARN,
+		note = vim.diagnostic.severity.HINT,
+	},
 }
 
 ---@class mypy.Config
----@field use_env boolean?
+---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
+---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
+---@field severities {string: vim.diagnostic.Severity}? Mypy severiry to diagnostics severity mapping.
 
 ---@param config mypy.Config?
 M.setup = function(config)
@@ -11,8 +22,14 @@ M.setup = function(config)
 	M.enabled = true
 
 	config = config or {}
-	if config.use_env ~= nil then
-		M.use_env = config.use_env
+	if config.use_venv ~= nil then
+		M.use_env = config.use_venv
+	end
+	if config.venv_path ~= nil then
+		M.venv_path = config.venv_path
+	end
+	if config.severities ~= nil then
+		M.severities = config.severities
 	end
 
 	vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost", "InsertLeave" }, {
@@ -21,32 +38,25 @@ M.setup = function(config)
 		callback = M.typecheck_current_buffer,
 	})
 
-	-- vim.api.nvim_create_user_command('MypyEnable', function(_)
-	--   M.enabled = true
-	--   M.typecheck_current_buffer()
-	-- end, { desc = 'Enable Mypy diagnostics' })
-	-- vim.api.nvim_create_user_command('MypyDisable', function(_)
-	--   M.enabled = false
-	--   M.typecheck_current_buffer()
-	-- end, { desc = 'Disable Mypy diagnostics' })
-	-- vim.api.nvim_create_user_command('MypyToggle', function(_)
-	--   M.enabled = not M.enabled
-	--   M.typecheck_current_buffer()
-	-- end, { desc = 'Toggle Mypy diagnostics' })
+	vim.api.nvim_create_user_command("MypyEnable", function()
+		M.enabled = true
+		M.typecheck_current_buffer()
+	end, { desc = "Enable mypy diagnostics" })
+	vim.api.nvim_create_user_command("MypyDisable", function()
+		M.enabled = false
+	end, { desc = "Disable mypy diagnostics" })
+	vim.api.nvim_create_user_command("MypyToggle", function()
+		M.enabled = not M.enabled
+		if M.enabled then
+			M.typecheck_current_buffer()
+		end
+	end, { desc = "Toggle mypy diagnostics" })
 end
 
-local severities = {
-	error = vim.diagnostic.severity.ERROR,
-	warning = vim.diagnostic.severity.WARN,
-	note = vim.diagnostic.severity.HINT,
-}
-
----@param use_env boolean
 ---@return string
-local function mypy_path(use_env)
-	local venv_path = vim.env.VIRTUAL_ENV .. "/bin/mypy"
-	if use_env and vim.env.VIRTUAL_ENV and vim.fn.filereadable(venv_path) then
-		return venv_path
+local function mypy_path()
+	if M.use_venv and M.venv_path and vim.fn.filereadable(M.venv_path .. "/bin/mypy") then
+		return M.venv_path .. "/bin/mypy"
 	end
 
 	return "mypy"
@@ -75,7 +85,7 @@ local function try_parse_long(line)
 		end_lnum = end_lnum,
 		end_col = end_col,
 		message = message,
-		severity = severities[severity],
+		severity = M.severities[severity],
 		code = code,
 	}
 end
@@ -103,7 +113,7 @@ local function try_parse_short(buf_num, line)
 		end_lnum = lnum,
 		end_col = col,
 		message = message,
-		severity = severities[severity],
+		severity = M.severities[severity],
 		code = code,
 	}
 end
@@ -139,7 +149,7 @@ local function mypy(buf_num)
 	local buf_path = vim.api.nvim_buf_get_name(0)
 
 	local cmd = {
-		mypy_path(M.use_env),
+		mypy_path(),
 		"--show-column-numbers",
 		"--show-error-end",
 		"--hide-error-context",
