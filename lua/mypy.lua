@@ -1,8 +1,19 @@
-M = {}
+M = {
+	use_env = true,
+}
 
-M.setup = function()
+---@class mypy.Config
+---@field use_env boolean?
+
+---@param config mypy.Config?
+M.setup = function(config)
 	M.namespace = vim.api.nvim_create_namespace("MypyNvim")
 	M.enabled = true
+
+	config = config or {}
+	if config.use_env ~= nil then
+		M.use_env = config.use_env
+	end
 
 	vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost", "InsertLeave" }, {
 		group = vim.api.nvim_create_augroup("MypyNvim", { clear = true }),
@@ -29,6 +40,17 @@ local severities = {
 	warning = vim.diagnostic.severity.WARN,
 	note = vim.diagnostic.severity.HINT,
 }
+
+---@param use_env boolean
+---@return string
+local function mypy_path(use_env)
+	local venv_path = vim.env.VIRTUAL_ENV .. "/bin/mypy"
+	if use_env and vim.env.VIRTUAL_ENV and vim.fn.filereadable(venv_path) then
+		return venv_path
+	end
+
+	return "mypy"
+end
 
 ---@param out string
 ---@return vim.Diagnostic[]
@@ -66,7 +88,7 @@ local function mypy(buf_num)
 	local buf_path = vim.api.nvim_buf_get_name(0)
 
 	local cmd = {
-		"mypy",
+		mypy_path(M.use_env),
 		"--show-column-numbers",
 		"--show-error-end",
 		"--hide-error-context",
@@ -109,3 +131,4 @@ M.typecheck_current_buffer = function()
 end
 
 return M
+
