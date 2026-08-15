@@ -74,16 +74,25 @@ M.setup = function(config)
   vim.api.nvim_create_user_command('MypyStop', function() mypy_stop() end, { desc = 'Stops mypy diagnostics' })
 end
 
+---@param path string
+---@return boolean
+local function file_exists(path)
+  local f = io.open(path, 'r')
+  if not f then return false end
+
+  f:close()
+  return true
+end
 ---@return string
 local function mypy_path()
-  if M.use_venv and M.venv_path and vim.fn.filereadable(M.venv_path .. '/bin/mypy') then
+  if M.use_venv and M.venv_path ~= '' and file_exists(M.venv_path .. '/bin/mypy') then
     return M.venv_path .. '/bin/mypy'
   end
   if M.use_venv then
     local cwd = vim.uv.cwd()
     local venv_names = { '.venv', 'venv', 'env' }
     for _, venv in ipairs(venv_names) do
-      if vim.fn.filereadable(cwd .. '/' .. venv .. '/bin/mypy') then return cwd .. '/' .. venv .. '/bin/mypy' end
+      if file_exists(cwd .. '/' .. venv .. '/bin/mypy') then return cwd .. '/' .. venv .. '/bin/mypy' end
     end
   end
   return 'mypy'
