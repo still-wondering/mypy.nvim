@@ -2,11 +2,13 @@
 ---@field use_venv boolean
 ---@field venv_path string
 ---@field timeout number
+---@field quite boolean
 ---@field severities table<string, vim.diagnostic.Severity>
 M = {
   use_venv = true,
   venv_path = tostring(vim.env.VIRTUAL_ENV or ''),
   timeout = 5 * 1000,
+  quite = true,
   severities = {
     error = vim.diagnostic.severity.ERROR,
     warning = vim.diagnostic.severity.WARN,
@@ -35,6 +37,7 @@ end
 ---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
 ---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
 ---@field timeout number? Timeout for mypy process to run in milliseconds. Defaults to 5s.
+---@field quite boolean? Whether to ignore mypy failures, e.g. due invalid syntax in the file.
 ---@field severities table<string, vim.diagnostic.Severity>? Mypy severiry to diagnostics severity mapping.
 
 ---@param config nvim-mypy.Config?
@@ -46,6 +49,7 @@ M.setup = function(config)
   if config.use_venv ~= nil then M.use_venv = config.use_venv end
   if config.venv_path ~= nil then M.venv_path = config.venv_path end
   if config.timeout ~= nil then M.timeout = config.timeout end
+  if config.quite ~= nil then M.quite = config.quite end
   if config.severities ~= nil then M.severities = config.severities end
 
   vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWritePost', 'InsertLeave' }, {
@@ -197,7 +201,7 @@ local function mypy(buf_num)
         return
       end
 
-      if mypy_result.code ~= 0 then
+      if mypy_result.code ~= 0 and not M.quite then
         vim.schedule(
           function()
             vim.notify(
