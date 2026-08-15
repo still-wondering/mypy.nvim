@@ -2,13 +2,13 @@
 ---@field use_venv boolean
 ---@field venv_path string
 ---@field timeout number
----@field quite boolean
+---@field quiet boolean
 ---@field severities table<string, vim.diagnostic.Severity>
 M = {
   use_venv = true,
   venv_path = tostring(vim.env.VIRTUAL_ENV or ''),
   timeout = 5 * 1000,
-  quite = true,
+  quiet = true,
   severities = {
     error = vim.diagnostic.severity.ERROR,
     warning = vim.diagnostic.severity.WARN,
@@ -28,16 +28,16 @@ end
 local function mypy_start() M.typecheck_current_buffer() end
 
 local function mypy_stop()
-  for buf, proc in pairs(running_procs_by_buf) do
+  for _, proc in pairs(running_procs_by_buf) do
     cancel_mypy(proc)
-    running_procs_by_buf[buf] = nil
   end
+  running_procs_by_buf = {}
 end
 ---@class nvim-mypy.Config
 ---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
 ---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
 ---@field timeout number? Timeout for mypy process to run in milliseconds. Defaults to 5s.
----@field quite boolean? Whether to ignore mypy failures, e.g. due invalid syntax in the file.
+---@field quiet boolean? Whether to ignore mypy failures, e.g. due invalid syntax in the file.
 ---@field severities table<string, vim.diagnostic.Severity>? Mypy severiry to diagnostics severity mapping.
 
 ---@param config nvim-mypy.Config?
@@ -49,10 +49,10 @@ M.setup = function(config)
   if config.use_venv ~= nil then M.use_venv = config.use_venv end
   if config.venv_path ~= nil then M.venv_path = config.venv_path end
   if config.timeout ~= nil then M.timeout = config.timeout end
-  if config.quite ~= nil then M.quite = config.quite end
+  if config.quiet ~= nil then M.quiet = config.quiet end
   if config.severities ~= nil then M.severities = config.severities end
 
-  vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWritePost', 'InsertLeave' }, {
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWritePost' }, {
     group = vim.api.nvim_create_augroup('MypyNvim', { clear = true }),
     pattern = { '*.py', '*.pyi' },
     callback = M.typecheck_current_buffer,
@@ -126,7 +126,9 @@ local function try_parse_short(buf_num, line)
   if not filename then return nil end
 
   local lnum = math.max(tonumber(line_from) - 1, 0)
-  local col = #vim.api.nvim_buf_get_lines(buf_num, lnum, lnum + 1, true)[1]
+
+  local src_line = vim.api.nvim_buf_get_lines(buf_num, lnum, lnum + 1, false)
+  local col = src_line[1] and #src_line[1] or 0
 
   return {
     source = 'mypy',
@@ -159,7 +161,7 @@ local function parse(buf_num, out)
       goto continue
     end
 
-    vim.notify(("Can not process mypy output line : '%s'"):format(line), vim.log.levels.WARN)
+    if not M.quiet then vim.notify(("Can not process mypy output line : '%s'"):format(line), vim.log.levels.WARN) end
 
     ::continue::
   end
@@ -201,7 +203,7 @@ local function mypy(buf_num)
         return
       end
 
-      if mypy_result.code ~= 0 and not M.quite then
+      if mypy_result.code ~= 0 and not M.quiet then
         vim.schedule(
           function()
             vim.notify(

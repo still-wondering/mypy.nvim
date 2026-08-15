@@ -37,7 +37,7 @@ require("nvim-mypy").setup{
 	use_venv = true, -- whether to try discover mypy from venv
 	venv_path = tostring(vim.env.VIRTUAL_ENV or ""), -- default venv path
 	timeout = 5 * 1000, -- timeout per each mypy process
-    quite = true, -- whether to not report mypy failures other than type checking
+    quiet = true, -- whether to not report plugin failures or mypy failures other than type checking
 	severities = {
 		error = vim.diagnostic.severity.ERROR,
 		warning = vim.diagnostic.severity.WARN,
