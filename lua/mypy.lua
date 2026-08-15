@@ -25,6 +25,16 @@ local function cancel_mypy(proc)
 	end
 end
 
+local function mypy_start()
+	M.typecheck_current_buffer()
+end
+
+local function mypy_stop()
+	for buf, proc in pairs(running_procs_by_buf) do
+		cancel_mypy(proc)
+		running_procs_by_buf[buf] = nil
+	end
+end
 ---@class mypy.Config
 ---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
 ---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
@@ -58,21 +68,20 @@ M.setup = function(config)
 
 	vim.api.nvim_create_user_command("MypyEnable", function()
 		M.enabled = true
-		M.typecheck_current_buffer()
+		mypy_start()
 	end, { desc = "Enable mypy diagnostics" })
 	vim.api.nvim_create_user_command("MypyDisable", function()
 		M.enabled = false
-		for buf, proc in pairs(running_procs_by_buf) do
-			cancel_mypy(proc)
-			running_procs_by_buf[buf] = nil
-		end
+		mypy_stop()
 	end, { desc = "Disable mypy diagnostics" })
-	vim.api.nvim_create_user_command("MypyToggle", function()
-		M.enabled = not M.enabled
-		if M.enabled then
-			M.typecheck_current_buffer()
-		end
-	end, { desc = "Toggle mypy diagnostics" })
+	vim.api.nvim_create_user_command("MypyRestart", function()
+		mypy_stop()
+		M.enabled = true
+		mypy_start()
+	end, { desc = "Restart mypy diagnostics" })
+	vim.api.nvim_create_user_command("MypyStop", function()
+		mypy_stop()
+	end, { desc = "Stops mypy diagnostics" })
 end
 
 ---@return string
@@ -80,7 +89,15 @@ local function mypy_path()
 	if M.use_venv and M.venv_path and vim.fn.filereadable(M.venv_path .. "/bin/mypy") then
 		return M.venv_path .. "/bin/mypy"
 	end
-
+	if M.use_venv then
+		local cwd = vim.uv.cwd()
+		local venv_names = { ".venv", "venv", "env" }
+		for _, venv in ipairs(venv_names) do
+			if vim.fn.filereadable(cwd .. "/" .. venv .. "/bin/mypy") then
+				return cwd .. "/" .. venv .. "/bin/mypy"
+			end
+		end
+	end
 	return "mypy"
 end
 
