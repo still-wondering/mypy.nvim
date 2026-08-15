@@ -1,4 +1,4 @@
----@class mypy.M
+---@class nvim-mypy.M
 ---@field use_venv boolean
 ---@field venv_path string
 ---@field timeout number
@@ -35,13 +35,13 @@ local function mypy_stop()
 		running_procs_by_buf[buf] = nil
 	end
 end
----@class mypy.Config
+---@class nvim-mypy.Config
 ---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
 ---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
 ---@field timeout number? Timeout for mypy process to run in milliseconds. Defaults to 5s.
 ---@field severities table<string, vim.diagnostic.Severity>? Mypy severiry to diagnostics severity mapping.
 
----@param config mypy.Config?
+---@param config nvim-mypy.Config?
 M.setup = function(config)
 	M.namespace = vim.api.nvim_create_namespace("MypyNvim")
 	M.enabled = true
