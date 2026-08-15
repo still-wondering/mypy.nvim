@@ -1,10 +1,14 @@
 ---@class nvim-mypy.M
+---@field enabled boolean
+---@field namespace integer?
 ---@field use_venv boolean
 ---@field venv_path string
 ---@field timeout number
 ---@field quiet boolean
 ---@field severities table<string, vim.diagnostic.Severity>
 M = {
+  namespace = nil,
+  enabled = false,
   use_venv = true,
   venv_path = tostring(vim.env.VIRTUAL_ENV or ''),
   timeout = 5 * 1000,
@@ -16,23 +20,6 @@ M = {
   },
 }
 
---- Running processes by buffer -> linting process
----@type table<integer, vim.SystemObj>
-local running_procs_by_buf = {}
-
----@param proc vim.SystemObj?
-local function cancel_mypy(proc)
-  if proc then proc:kill(9) end
-end
-
-local function mypy_start() M.typecheck_current_buffer() end
-
-local function mypy_stop()
-  for _, proc in pairs(running_procs_by_buf) do
-    cancel_mypy(proc)
-  end
-  running_procs_by_buf = {}
-end
 ---@class nvim-mypy.Config
 ---@field use_venv boolean? Whether to try load mypy from venv. Defaults to true.
 ---@field venv_path string? Path to venv. Defaults to `vim.env.VIRTUAL_ENV`
@@ -51,27 +38,15 @@ M.setup = function(config)
   if config.timeout ~= nil then M.timeout = config.timeout end
   if config.quiet ~= nil then M.quiet = config.quiet end
   if config.severities ~= nil then M.severities = config.severities end
+end
 
-  vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWritePost' }, {
-    group = vim.api.nvim_create_augroup('MypyNvim', { clear = true }),
-    pattern = { '*.py', '*.pyi' },
-    callback = M.typecheck_current_buffer,
-  })
-
-  vim.api.nvim_create_user_command('MypyEnable', function()
-    M.enabled = true
-    mypy_start()
-  end, { desc = 'Enable mypy diagnostics' })
-  vim.api.nvim_create_user_command('MypyDisable', function()
-    M.enabled = false
-    mypy_stop()
-  end, { desc = 'Disable mypy diagnostics' })
-  vim.api.nvim_create_user_command('MypyRestart', function()
-    mypy_stop()
-    M.enabled = true
-    mypy_start()
-  end, { desc = 'Restart mypy diagnostics' })
-  vim.api.nvim_create_user_command('MypyStop', function() mypy_stop() end, { desc = 'Stops mypy diagnostics' })
+local function validate_init()
+  if not M.namespace then
+    vim.notify(
+      "nvim-mypy plugin was not initialized properly. did you forget `require('nvim-mypy').setup()`?",
+      vim.log.levels.ERROR
+    )
+  end
 end
 
 ---@param path string
@@ -83,6 +58,7 @@ local function file_exists(path)
   f:close()
   return true
 end
+
 ---@return string
 local function mypy_path()
   if M.use_venv and M.venv_path ~= '' and file_exists(M.venv_path .. '/bin/mypy') then
@@ -177,6 +153,15 @@ local function parse(buf_num, out)
   return diagnostics
 end
 
+--- Running processes, buffer -> mypy process
+---@type table<integer, vim.SystemObj>
+local running_procs_by_buf = {}
+
+---@param proc vim.SystemObj?
+local function cancel_mypy(proc)
+  if proc then proc:kill(9) end
+end
+
 ---@param buf_num integer
 ---@return nil
 local function mypy(buf_num)
@@ -200,7 +185,6 @@ local function mypy(buf_num)
     mypy_proc = vim.system(cmd, { timeout = M.timeout }, function(mypy_result)
       ---@diagnostic disable-next-line: redefined-local
       if running_procs_by_buf[buf_num] ~= mypy_proc then return end
-      running_procs_by_buf[buf_num] = nil
 
       if mypy_result.code ~= 1 then
         vim.schedule(function() vim.diagnostic.reset(M.namespace, buf_num) end)
@@ -227,7 +211,8 @@ local function mypy(buf_num)
   end
 end
 
-M.typecheck_current_buffer = function()
+M.typecheck_current = function()
+  validate_init()
   local current_buf = vim.api.nvim_get_current_buf()
 
   if not vim.bo[current_buf].modifiable then return end
@@ -239,6 +224,16 @@ M.typecheck_current_buffer = function()
 
   local ok, call_result = pcall(mypy, current_buf)
   if not ok then vim.notify(string.format('Failed to run mypy: %s', call_result), vim.log.levels.WARN) end
+end
+
+--- Stop mypy linting for all the buffers
+M.stop_all = function()
+  validate_init()
+  for buf, proc in pairs(running_procs_by_buf) do
+    cancel_mypy(proc)
+    vim.diagnostic.reset(M.namespace, buf)
+  end
+  running_procs_by_buf = {}
 end
 
 return M
