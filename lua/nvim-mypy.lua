@@ -74,76 +74,60 @@ local function mypy_path()
   return 'mypy'
 end
 
---- Parse full mypy line format.
----@param line string
----@return vim.Diagnostic?
-local function try_parse_long(line)
-  local filename, line_from, col_from, line_to, col_to, severity, message, code =
-    line:match '([^:]+):(%d+):(%d+):(%d+):(%d+): (%a+): (.*) %[(%a[%a-]+)%]'
-
-  if not filename then return nil end
-
-  local lnum = math.max(tonumber(line_from) - 1, 0)
-  local col = math.max(tonumber(col_from) - 1, 0)
-  local end_lnum = math.max(tonumber(line_to) - 1, lnum)
-  local end_col = math.max(tonumber(col_to) - 1, col)
-
-  return {
-    source = 'mypy',
-    lnum = lnum,
-    col = col,
-    end_lnum = end_lnum,
-    end_col = end_col,
-    message = message,
-    severity = M.severities[severity],
-    code = code,
-  }
-end
-
---- Parse short mypy line format.
---- Some lines are still produced in short format for some reason, e.g. 'ignore-without-code'
 ---@param buf_num integer
----@param line string
----@return vim.Diagnostic?
-local function try_parse_short(buf_num, line)
-  local filename, line_from, severity, message, code = line:match '([^:]+):(%d+): (%a+): (.*) %[(%a[%a-]+)%]'
-
-  if not filename then return nil end
-
-  local lnum = math.max(tonumber(line_from) - 1, 0)
-
-  local src_line = vim.api.nvim_buf_get_lines(buf_num, lnum, lnum + 1, false)
-  local col = src_line[1] and #src_line[1] or 0
-
-  return {
-    source = 'mypy',
-    lnum = lnum,
-    col = col,
-    end_lnum = lnum,
-    end_col = col,
-    message = message,
-    severity = M.severities[severity],
-    code = code,
-  }
-end
-
----@param buf_num integer
+---@param buf_path string
 ---@param out string
 ---@return vim.Diagnostic[]
-local function parse(buf_num, out)
+local function parse(buf_num, buf_path, out)
   ---@type vim.Diagnostic[]
   local diagnostics = {}
   for line in out:gmatch '(.-)\n' do
-    local d = try_parse_long(line)
-    if d ~= nil then
-      table.insert(diagnostics, d)
-      goto continue
+    do -- try long format
+      local filename, line_from, col_from, line_to, col_to, severity, message, code =
+        line:match '([^:]+):(%d+):(%d+):(%d+):(%d+): (%a+): (.*) %[(%a[%a-]+)%]'
+      if filename and buf_path:sub(-#filename) == filename then
+        local lnum = math.max(tonumber(line_from) - 1, 0)
+        local col = math.max(tonumber(col_from) - 1, 0)
+        local end_lnum = math.max(tonumber(line_to) - 1, lnum)
+        local end_col = math.max(tonumber(col_to) - 1, col)
+        ---@type vim.Diagnostic
+        local d = {
+          bufnr = buf_num,
+          source = 'mypy',
+          lnum = lnum,
+          col = col,
+          end_lnum = end_lnum,
+          end_col = end_col,
+          message = message,
+          severity = M.severities[severity],
+          code = code,
+        }
+        table.insert(diagnostics, d)
+        goto continue
+      end
     end
 
-    d = try_parse_short(buf_num, line)
-    if d ~= nil then
-      table.insert(diagnostics, d)
-      goto continue
+    do -- try short format. NOTE: this is really a precautionary thing
+      local filename, line_from, severity, message, code = line:match '([^:]+):(%d+): (%a+): (.*) %[(%a[%a-]+)%]'
+      if filename and buf_path:sub(-#filename) == filename then
+        local lnum = math.max(tonumber(line_from) - 1, 0)
+        local src_line = vim.api.nvim_buf_get_lines(buf_num, lnum, lnum + 1, false)
+        local col = src_line[1] and #src_line[1] or 0
+        ---@type vim.Diagnostic
+        local d = {
+          bufnr = buf_num,
+          source = 'mypy',
+          lnum = lnum,
+          col = col,
+          end_lnum = lnum,
+          end_col = col,
+          message = message,
+          severity = M.severities[severity],
+          code = code,
+        }
+        table.insert(diagnostics, d)
+        goto continue
+      end
     end
 
     if not M.quiet then vim.notify(("Can not process mypy output line : '%s'"):format(line), vim.log.levels.WARN) end
@@ -190,7 +174,7 @@ local function mypy(buf_num)
         vim.schedule(function() vim.diagnostic.reset(M.namespace, buf_num) end)
       else
         vim.schedule(function()
-          local diagnostics = parse(buf_num, mypy_result.stdout)
+          local diagnostics = parse(buf_num, buf_path, mypy_result.stdout)
           vim.diagnostic.set(M.namespace, buf_num, diagnostics)
         end)
         return
