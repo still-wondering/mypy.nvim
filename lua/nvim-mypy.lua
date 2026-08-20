@@ -65,7 +65,7 @@ local function mypy_path()
     return M.venv_path .. '/bin/mypy'
   end
   if M.use_venv then
-    local cwd = vim.uv.cwd()
+    local cwd = vim.fn.getcwd()
     local venv_names = { '.venv', 'venv', 'env' }
     for _, venv in ipairs(venv_names) do
       if file_exists(cwd .. '/' .. venv .. '/bin/mypy') then return cwd .. '/' .. venv .. '/bin/mypy' end
